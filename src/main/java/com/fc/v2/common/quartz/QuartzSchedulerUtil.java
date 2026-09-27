@@ -115,10 +115,12 @@ public class QuartzSchedulerUtil {
                 cronScheduleBuilder = CronScheduleBuilder.cronSchedule(TEST_CRON);
             }
 
-            // CronTrigger表达式触发器 继承于Trigger  //cronScheduleBuilder.withMisfireHandlingInstructionDoNothing()错过60分钟后不在补偿 拉下的执行次数
+            // CronTrigger表达式触发器 继承于Trigger
             // TriggerBuilder 用于构建触发器实例
+            // 超时（错失触发）怎么补，只许 applyMisfire 一处按账上 misfire_policy 拿主意，
+            // 不许在此另写死一种，否则账上记"补一次"、实际却"不补"，两边口径对不上。
             CronTrigger cronTrigger = TriggerBuilder.newTrigger().withIdentity(ScheduleConstants.TASK_CLASS_NAME + job.getId(), job.getJobGroup())
-                    .withSchedule(cronScheduleBuilder.withMisfireHandlingInstructionDoNothing()).build();
+                    .withSchedule(applyMisfire(cronScheduleBuilder, job.getMisfirePolicy())).build();
             //放入参数，运行时的方法可以获取
             jobDetail.getJobDataMap().put(ScheduleConstants.TASK_PROPERTIES, job);
             scheduler.scheduleJob(jobDetail, cronTrigger);
@@ -265,6 +267,32 @@ public class QuartzSchedulerUtil {
     private static Class<? extends Job> getQuartzJobClass(TSysQuartzJob sysJob) {
         boolean isConcurrent = "0".equals(sysJob.getConcurrent());
         return isConcurrent ? QuartzJobExecution.class : QuartzDisallowConcurrentExecution.class;
+    }
+
+    /**
+     * 超时（错失触发）补偿口径：账上 misfire_policy 怎么记，触发器就怎么补，全处只许这一处拿主意。
+     * 0默认→走 Quartz 智能口径；1立即补全部；2只补一次；3不补。
+     * 账上没记或认不出的按默认走，不许静默落到"不补"。
+     */
+    private static CronScheduleBuilder applyMisfire(CronScheduleBuilder builder, String misfirePolicy) {
+        Integer policy = ScheduleConstants.MISFIRE_DEFAULT;
+        if (StringUtils.isNotEmpty(misfirePolicy)) {
+            try {
+                policy = Integer.valueOf(misfirePolicy.trim());
+            } catch (NumberFormatException e) {
+                policy = ScheduleConstants.MISFIRE_DEFAULT;
+            }
+        }
+        if (ScheduleConstants.MISFIRE_IGNORE_MISFIRES.equals(policy)) {
+            return builder.withMisfireHandlingInstructionIgnoreMisfires();
+        }
+        if (ScheduleConstants.MISFIRE_FIRE_AND_PROCEED.equals(policy)) {
+            return builder.withMisfireHandlingInstructionFireAndProceed();
+        }
+        if (ScheduleConstants.MISFIRE_DO_NOTHING.equals(policy)) {
+            return builder.withMisfireHandlingInstructionDoNothing();
+        }
+        return builder;
     }
 
 
